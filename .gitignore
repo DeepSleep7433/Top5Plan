@@ -1,0 +1,46 @@
+# Flutter / Dart
+client/.dart_tool/
+client/.packages
+client/build/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/windows/flutter/ephemeral/
+client/ios/Flutter/ephemeral/
+client/macos/Flutter/ephemeral/
+client/linux/flutter/ephemeral/
+
+# Android
+client/android/.gradle/
+client/android/build/
+client/android/local.properties
+client/android/key.properties
+
+# Server
+server/t5d
+server/t5d.exe
+*.log
+
+# Local secrets
+.env
+.env.*
+!.env.example
+*.pfx
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+signing/
+docs/
+artifacts/
+release/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Packaging staging
+build/

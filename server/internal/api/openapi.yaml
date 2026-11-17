@@ -1,0 +1,555 @@
+openapi: 3.0.3
+info:
+  title: T5 Personal Decision & Todo API
+  version: 1.0.0
+  description: |
+    Single-user, multi-device, offline-first synchronization and AI service.
+    All timestamps are UTC ISO-8601 unless explicitly marked as a business date.
+servers:
+  - url: https://your-server.example.com/api/v1
+    description: Production (HTTPS required)
+  - url: http://127.0.0.1:8080/api/v1
+    description: Local development
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Devices
+  - name: Sync
+  - name: Focus
+  - name: Settings
+  - name: AI
+  - name: Updates
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      security: []
+      summary: Process liveness
+      responses:
+        "200": {description: Process is alive}
+  /readyz:
+    get:
+      tags: [Health]
+      security: []
+      summary: Database and migration readiness
+      responses:
+        "200": {description: Ready}
+        "503": {$ref: "#/components/responses/Error"}
+  /devices/pair:
+    post:
+      tags: [Devices]
+      security: []
+      summary: Exchange a one-time pairing code for a device token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_name, platform]
+              properties:
+                pairing_code: {type: string, description: Six-digit one-time code valid for 30 seconds, example: "042731"}
+                pairing_token: {type: string, deprecated: true, description: Legacy one-time code field}
+                device_name: {type: string, maxLength: 120}
+                platform: {type: string, enum: [windows, android, unknown]}
+      responses:
+        "201":
+          description: Paired. The raw device token is returned once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device: {$ref: "#/components/schemas/Device"}
+                  device_token: {type: string}
+        "401": {$ref: "#/components/responses/Error"}
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List paired devices
+      responses:
+        "200":
+          description: Devices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items: {$ref: "#/components/schemas/Device"}
+  /devices/pairing-code:
+    post:
+      tags: [Devices]
+      summary: Issue the current six-digit pairing code on demand
+      description: |
+        Requires an already-paired device. Invalidates previous unused codes and
+        returns a new six-digit code valid for 30 seconds. The code is consumed
+        once by POST /devices/pair. Pairing attempts are rate limited.
+      responses:
+        "201":
+          description: On-demand pairing code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pairing_code: {type: string, example: "042731"}
+                  expires_at: {type: string, format: date-time}
+                  expires_in_seconds: {type: integer}
+                  code_length: {type: integer, example: 6}
+        "429": {$ref: "#/components/responses/Error"}
+  /devices/{id}:
+    delete:
+      tags: [Devices]
+      summary: Revoke a device token
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Revoked}
+        "404": {$ref: "#/components/responses/Error"}
+  /sync/push:
+    post:
+      tags: [Sync]
+      summary: Idempotently push version-checked operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operations]
+              properties:
+                operations:
+                  type: array
+                  maxItems: 100
+                  items: {$ref: "#/components/schemas/Operation"}
+      responses:
+        "200":
+          description: Per-operation results; conflicts include the current server entity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: {$ref: "#/components/schemas/PushResult"}
+        "409": {$ref: "#/components/responses/Error"}
+  /sync/changes:
+    get:
+      tags: [Sync]
+      summary: Pull changes after a monotonic server cursor
+      parameters:
+        - {in: query, name: cursor, schema: {type: integer, format: int64, default: 0}}
+        - {in: query, name: generation, schema: {type: string, format: uuid}}
+        - {in: query, name: limit, schema: {type: integer, default: 500, maximum: 2000}}
+      responses:
+        "200":
+          description: A page of changes
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChangesResponse"}
+        "409": {$ref: "#/components/responses/Error"}
+  /sync/bootstrap:
+    get:
+      tags: [Sync]
+      summary: Page current server mirror records for first sync or generation rebuild
+      parameters:
+        - {in: query, name: after_type, schema: {type: string}}
+        - {in: query, name: after_id, schema: {type: string, format: uuid}}
+        - {in: query, name: limit, schema: {type: integer, default: 500, maximum: 2000}}
+      responses:
+        "200":
+          description: Current mirror page plus snapshot sequence
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BootstrapResponse"}
+  /focus/current:
+    get:
+      tags: [Focus]
+      summary: Read the shared active focus session
+      responses:
+        "200":
+          description: Session or null
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FocusResponse"}
+  /focus/commands:
+    post:
+      tags: [Focus]
+      summary: Start, takeover, pause, resume, or end a shared session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, expected_version]
+              properties:
+                action: {type: string, enum: [start, takeover, pause, resume, end]}
+                expected_version: {type: integer, format: int64}
+                session_id: {type: string, format: uuid}
+                task_id: {type: string, format: uuid, nullable: true}
+                label: {type: string, maxLength: 200}
+                target_seconds: {type: integer, minimum: 1, maximum: 86400}
+      responses:
+        "200":
+          description: Updated focus state
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FocusResponse"}
+        "409": {$ref: "#/components/responses/Error"}
+  /settings:
+    get:
+      tags: [Settings]
+      summary: Read account timezone and cross-device settings
+      responses:
+        "200": {description: Settings}
+    put:
+      tags: [Settings]
+      summary: Update account timezone and settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timezone: {type: string}
+                settings: {$ref: "#/components/schemas/Settings"}
+      responses:
+        "200": {description: Settings}
+  /ai/configs:
+    get:
+      tags: [AI]
+      summary: List masked model configurations
+      responses:
+        "200": {description: Configurations without API keys}
+    post:
+      tags: [AI]
+      summary: Create a model configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AIConfigInput"}
+      responses:
+        "201": {description: Created}
+  /ai/configs/test:
+    post:
+      tags: [AI]
+      summary: Test unsaved credentials with a real provider request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AIConfigInput"}
+      responses:
+        "200": {description: Connection test result}
+  /ai/configs/{id}:
+    patch:
+      tags: [AI]
+      summary: Update a model configuration; omit api_key to keep the old key
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AIConfigInput"}
+      responses:
+        "200": {description: Updated}
+    delete:
+      tags: [AI]
+      summary: Delete a model configuration
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Deleted}
+  /ai/configs/{id}/test:
+    post:
+      tags: [AI]
+      summary: Test a saved configuration with a real provider request
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Test result}
+  /ai/assist/preview:
+    post:
+      tags: [AI]
+      summary: Preview the exact source records and prompt before a manual AI call
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                instruction: {type: string, maxLength: 4000}
+                sources:
+                  type: array
+                  items: {$ref: "#/components/schemas/SourceRef"}
+      responses:
+        "200": {description: Preview}
+        "409": {$ref: "#/components/responses/Error"}
+  /ai/jobs:
+    post:
+      tags: [AI]
+      summary: Queue a manual assistance job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sources]
+              properties:
+                config_id: {type: string, format: uuid}
+                instruction: {type: string}
+                sources:
+                  type: array
+                  items: {$ref: "#/components/schemas/SourceRef"}
+      responses:
+        "202": {description: Queued job}
+        "429": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [AI]
+      summary: List recent AI jobs
+      parameters:
+        - {in: query, name: limit, schema: {type: integer, default: 30}}
+      responses:
+        "200": {description: Jobs}
+  /ai/jobs/{id}:
+    get:
+      tags: [AI]
+      summary: Read an AI job and its result
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Job}
+        "404": {$ref: "#/components/responses/Error"}
+  /ai/reports:
+    get:
+      tags: [AI]
+      summary: List immutable generated report versions
+      parameters:
+        - {in: query, name: kind, schema: {type: string, enum: [daily, weekly]}}
+        - {in: query, name: limit, schema: {type: integer, default: 20}}
+      responses:
+        "200": {description: Reports}
+  /app-updates/latest:
+    get:
+      tags: [Updates]
+      security: []
+      summary: Check the latest published application release
+      parameters:
+        - {in: query, name: platform, required: true, schema: {type: string, enum: [windows, android]}}
+        - {in: query, name: current_version, required: true, schema: {type: string, example: "1.0.0"}}
+        - {in: query, name: channel, schema: {type: string, enum: [stable, beta], default: stable}}
+      responses:
+        "200":
+          description: Update decision
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UpdateCheck"}
+        "400": {$ref: "#/components/responses/Error"}
+  /app-updates:
+    get:
+      tags: [Updates]
+      summary: List published updates (paired device)
+      parameters:
+        - {in: query, name: platform, schema: {type: string, enum: [windows, android]}}
+      responses:
+        "200": {description: Published releases}
+    post:
+      tags: [Updates]
+      summary: Publish an app release announcement (paired device)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AppReleaseInput"}
+      responses:
+        "201": {description: Published}
+  /app-updates/{id}:
+    delete:
+      tags: [Updates]
+      summary: Deactivate a published release
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Deactivated}
+        "404": {$ref: "#/components/responses/Error"}
+  /ai/reports/{id}/regenerate:
+    post:
+      tags: [AI]
+      summary: Generate a new report version for the same period
+      description: Old report versions are retained. Uses only records currently synchronized to the server.
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "202": {description: Regeneration job queued}
+        "429": {$ref: "#/components/responses/Error"}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    Error:
+      description: Error envelope
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: {type: string}
+        message: {type: string}
+        details: {type: object, additionalProperties: true}
+    Device:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        platform: {type: string}
+        created_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time, nullable: true}
+        revoked_at: {type: string, format: date-time, nullable: true}
+    Operation:
+      type: object
+      required: [operation_id, entity_type, entity_id, base_version, deleted]
+      properties:
+        operation_id: {type: string, format: uuid}
+        entity_type:
+          type: string
+          enum: [task, task_list, tag, task_tag, daily_focus, decision, issue, daily_review, focus_record, task_series]
+        entity_id: {type: string, format: uuid}
+        base_version: {type: integer, format: int64}
+        deleted: {type: boolean}
+        payload:
+          type: object
+          additionalProperties: true
+          description: Opaque business JSON; required when deleted=false
+    PushResult:
+      type: object
+      properties:
+        operation_id: {type: string, format: uuid}
+        accepted: {type: boolean}
+        conflict: {type: boolean}
+        server_version: {type: integer, format: int64}
+        entity: {$ref: "#/components/schemas/Entity"}
+    Entity:
+      type: object
+      properties:
+        entity_type: {type: string}
+        entity_id: {type: string, format: uuid}
+        version: {type: integer, format: int64}
+        deleted: {type: boolean}
+        data: {type: object, additionalProperties: true}
+        server_updated_at: {type: string, format: date-time}
+    ChangesResponse:
+      type: object
+      properties:
+        generation: {type: string, format: uuid}
+        server_time: {type: string, format: date-time}
+        changes:
+          type: array
+          items: {$ref: "#/components/schemas/Entity"}
+        next_cursor: {type: integer, format: int64}
+        has_more: {type: boolean}
+    BootstrapResponse:
+      type: object
+      properties:
+        generation: {type: string, format: uuid}
+        server_time: {type: string, format: date-time}
+        snapshot_seq: {type: integer, format: int64}
+        entities:
+          type: array
+          items: {$ref: "#/components/schemas/Entity"}
+        next_after_type: {type: string}
+        next_after_id: {type: string, format: uuid}
+        has_more: {type: boolean}
+    FocusResponse:
+      type: object
+      properties:
+        session:
+          nullable: true
+          allOf: [{$ref: "#/components/schemas/FocusSession"}]
+        server_time: {type: string, format: date-time}
+    FocusSession:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        task_id: {type: string, format: uuid, nullable: true}
+        label: {type: string}
+        target_seconds: {type: integer}
+        state: {type: string, enum: [running, paused]}
+        accumulated_ms: {type: integer, format: int64}
+        running_since: {type: string, format: date-time, nullable: true}
+        control_device_id: {type: string, format: uuid}
+        version: {type: integer, format: int64}
+        elapsed_ms: {type: integer, format: int64}
+        remaining_ms: {type: integer, format: int64}
+    Settings:
+      type: object
+      properties:
+        ai_daily_limit: {type: integer, default: 20}
+        daily_report_enabled: {type: boolean}
+        daily_report_time: {type: string, example: "21:00"}
+        weekly_report_enabled: {type: boolean}
+        weekly_report_time: {type: string, example: "21:30"}
+        excluded_lists: {type: array, items: {type: string, format: uuid}}
+        excluded_entity_ids: {type: array, items: {type: string, format: uuid}}
+        default_ai_config_id: {type: string, format: uuid}
+    AIConfigInput:
+      type: object
+      required: [name, base_url, model]
+      properties:
+        name: {type: string}
+        base_url: {type: string, example: "https://api.deepseek.com/v1"}
+        model: {type: string, example: "deepseek-chat"}
+        api_key: {type: string, writeOnly: true}
+        timeout_seconds: {type: integer, default: 120}
+        max_output_tokens: {type: integer, default: 2000}
+        enabled: {type: boolean}
+    UpdateCheck:
+      type: object
+      properties:
+        update_available: {type: boolean}
+        platform: {type: string}
+        current_version: {type: string}
+        latest: {$ref: "#/components/schemas/AppRelease"}
+    AppRelease:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        platform: {type: string}
+        version: {type: string}
+        download_url: {type: string}
+        sha256: {type: string}
+        release_notes: {type: string}
+        mandatory: {type: boolean}
+        channel: {type: string}
+        published_at: {type: string, format: date-time}
+    AppReleaseInput:
+      type: object
+      required: [platform, version, download_url]
+      properties:
+        platform: {type: string, enum: [windows, android]}
+        version: {type: string}
+        download_url: {type: string}
+        sha256: {type: string}
+        release_notes: {type: string}
+        mandatory: {type: boolean}
+        channel: {type: string, enum: [stable, beta]}
+    SourceRef:
+      type: object
+      required: [entity_type, entity_id]
+      properties:
+        entity_type: {type: string}
+        entity_id: {type: string, format: uuid}
