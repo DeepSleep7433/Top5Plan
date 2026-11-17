@@ -1,4 +1,48 @@
+# -----------------------------------------------------------------------------
+# Local secrets and credentials
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+*.jks
+*.keystore
+*.cer
+*.crt
+**/key.properties
+**/local.properties
+**/secrets.json
+**/credentials.json
+
+# -----------------------------------------------------------------------------
+# Internal docs / test artifacts / release binaries (not published)
+# -----------------------------------------------------------------------------
+docs/
+docs/**
+artifacts/
+artifacts/**
+signing/
+signing/**
+release/
+release/**
+backups/
+backups/**
+*.sql
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.backup
+*.bak
+
+# -----------------------------------------------------------------------------
 # Flutter / Dart
+# -----------------------------------------------------------------------------
 client/.dart_tool/
 client/.packages
 client/build/
@@ -8,39 +52,35 @@ client/windows/flutter/ephemeral/
 client/ios/Flutter/ephemeral/
 client/macos/Flutter/ephemeral/
 client/linux/flutter/ephemeral/
+.dart_tool/
+build/
 
+# -----------------------------------------------------------------------------
 # Android
+# -----------------------------------------------------------------------------
 client/android/.gradle/
 client/android/build/
 client/android/local.properties
 client/android/key.properties
+*.jks
+*.keystore
 
-# Server
+# -----------------------------------------------------------------------------
+# Server / logs
+# -----------------------------------------------------------------------------
 server/t5d
 server/t5d.exe
 *.log
+*.out
+*.pid
+*.tmp
 
-# Local secrets
-.env
-.env.*
-!.env.example
-*.pfx
-*.pem
-*.key
-*.p12
-*.jks
-*.keystore
-signing/
-docs/
-artifacts/
-release/
-
+# -----------------------------------------------------------------------------
 # OS / editor
+# -----------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 *.iml
-
-# Packaging staging
-build/
+.vs/
